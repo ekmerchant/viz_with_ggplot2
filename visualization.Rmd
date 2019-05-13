@@ -1,0 +1,225 @@
+---
+title: "Data Visualization with ggplot - Part 2"
+author: "Emily Klancher Merchant (ekmerchant@ucdavis.edu)"
+output: html_notebook
+---
+
+This notebook will introduce several different types of graphs you can make with the `ggplot` package for `r`. The data we will use are historical U.S. Census microdata (1900-2000) from the [IPUMS](http://ipums.org) project. Since I am not permitted to redistribute the raw data, the data files included with this notebook are aggregated in various ways. The file `ipumsdata.txt` is the codebook for the raw data, and contains the information you would need to request the raw data from [IPUMS](http://ipums.org), where they are free and publicly available. I have also included the code for aggregating.
+
+These examples will graph two things: marital status by sex over time for the United States as a whole (column graphs, area graphs, line graphs, and heat maps) and sex ratios for each state over time (choropleth maps, scatterplots, and Cleveland dot plots). You will need to install the following packages: `tidyverse`, `tigris`, `sf`, `viridis`, `cowplot`.
+
+Load required packages.
+```{r results = "hide"}
+library(tidyverse)
+#The following are needed only for choropleth maps:
+library(tigris)
+library(sf)
+library(viridis)
+library(cowplot)
+```
+
+This block of code aggregates the raw data. Skip it if you don't have the raw data.
+```{r results = "hide"}
+#Fill in path to raw data file, which should be in .csv format
+ipumsdata <- "ipumsdata.csv"
+ipums <- read_csv(ipumsdata) %>% filter(AGE < 90) %>%
+            mutate(MARITAL = factor(ifelse(MARST %in% 2:4, 3,
+                                    ifelse(MARST == 6, 0, MARST)),
+                  labels = c("Single", "Married", "Divorced", "Widowed")),
+                  SEX = factor(SEX, labels = c("Male", "Female")))
+marital_by_sex <- ipums %>% group_by(YEAR, SEX) %>% 
+                          count(MARITAL, wt = PERWT) %>% mutate(TOTAL = sum(n))
+marital_by_sex_age <- ipums %>% filter(YEAR %in% c(1900, 1950, 2000)) %>%
+                          group_by(YEAR, SEX, AGE) %>% 
+                          count(MARITAL, wt = PERWT) %>% mutate(TOTAL = sum(n))
+sex_ratio <- ipums %>% count(YEAR, STATEFIP, SEX) %>% 
+                spread(SEX, n) %>% mutate(RATIO = Male/Female * 100)
+saveRDS(marital_by_sex, "data/marital_by_sex.RDS")
+saveRDS(marital_by_sex_age, "data/marital_by_sex_age.RDS")
+saveRDS(sex_ratio, "data/sex_ratio.RDS")
+```
+If you do not have the raw data, run the following to load the aggregated data frames.
+```{r results = "hide"}
+marital_by_sex <- readRDS("data/marital_by_sex.RDS")
+marital_by_sex_age <- readRDS("data/marital_by_sex_age.RDS")
+sex_ratio <- readRDS("data/sex_ratio.RDS")
+```
+# Marital Status by Sex in the United States, 1900-2000
+## Column Graphs
+```{r fig.height=10}
+readRDS("graphs/stacked_column.RDS")
+```
+This stacked column graph shows the number of people in each marital status category (single, married, divorced, widowed) at each census between 1900 and 2000. There are four variables in this graph: the *x-axis* represents the year of the census, the *y-axis* represents the number of people in each marital status category in each year, the *fill* represents marital status, and the graph is *faceted* by sex. Three of these variables are categorical: sex, marital status, and year. Year looks like a continuous variable, and `r` will treat it that way, but it is actually categorical because we only have data at ten-year intervals.
+
+To make this graph, we need to aggregate the data by all of the categorical variables that we will use for graphing: sex, year, and marital status. The `marital_by_sex` data frame is already aggregated appropriately:
+```{r}
+head(marital_by_sex)
+```
+The data file is in the *tidy* format, which means that there is one column for each variable (`YEAR`, `SEX`, `MARITAL`) and one row for each value of each variable (one row for single men in 1900, one row for married men in 1900, etc.). The variable `n` indicates the number of people in each year/sex/marital status category; the variable `TOTAL` represents the number of people in each year/sex category. We don't need it for this graph, but will use it later.
+
+This data frame is ready to plot! For a stacked column graph, we will use the `geom_col()` geometry.
+```{r fig.height=10}
+ggplot(marital_by_sex, aes(x = YEAR, y = n, fill = MARITAL)) + 
+  geom_col() +
+  facet_grid(rows = vars(SEX)) +
+  scale_x_continuous(breaks = seq(1900, 2000, 20)) +
+  scale_y_continuous(labels = scales::comma) +
+  labs(title = "Marital Status by Sex, 1900-2000",
+       x = "Year", y = "Number of People", fill = "Marital Status") +
+  theme_minimal(base_size = 20)
+```
+If we want to show the *percent* of people in each marital status category, rather than the *number* of people, we just need to add the `position = "fill"` option in `geom_col()`.
+```{r fig.height=10}
+ggplot(marital_by_sex, aes(x = YEAR, y = n, fill = MARITAL)) + 
+  geom_col(position = "fill") +
+  facet_grid(rows = vars(SEX)) +
+  scale_x_continuous(breaks = seq(1900, 2000, 20)) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(title = "Marital Status by Sex, 1900-2000",
+       x = "Year", y = "Percent of People", fill = "Marital Status") +
+  theme_minimal(base_size = 20)
+```
+To plot the columns next to one another rather than stacking them, use the `position = "dodge"` option in `geom_col()`.
+```{r fig.height=10}
+ggplot(marital_by_sex, aes(x = YEAR, y = n, fill = MARITAL)) + 
+  geom_col(position = "dodge") +
+  facet_grid(rows = vars(SEX)) +
+  scale_x_continuous(breaks = seq(1900, 2000, 20)) +
+  scale_y_continuous(labels = scales::comma) +
+  labs(title = "Marital Status by Sex, 1900-2000",
+       x = "Year", y = "Number of People", fill = "Marital Status") +
+  theme_minimal(base_size = 20)
+```
+## Area Graphs
+```{r fig.height=20}
+readRDS("graphs/area.RDS")
+```
+This area graph shows the number of people in each marital status category at each age in 1900, 1950, and 2000. Now there are two continuous variables (age, number of people) and three categorical variables (year, sex, marital status). The data frame `marital_by_sex_age` is aggregated by age, year, sex, and marital status (one row for each unique combination of age, year, sex, and marital status). The `n` column gives the number of people in each year/sex/age/marital status category and the `TOTAL` column gives the number of people in each year/sex/age category.
+```{r}
+head(marital_by_sex_age)
+```
+The process for graphing is identical to that for a column graph, but it uses `geom_area()` instead of `geom_col`. Area graphs are good for graphs with continuous x-axis variables, whereas column graphs are better for graphs with categorical x-axis variables.
+```{r fig.height=20}
+ggplot(marital_by_sex_age, aes(x = AGE, y = n, fill = MARITAL)) +
+  geom_area() +
+  facet_grid(rows = vars(YEAR), cols = vars(SEX)) +
+  scale_y_continuous(labels = scales::comma) +
+  labs(title = "Marital Status by Sex, 1900-2000",
+       x = "Age", y = "Number of People", fill = "Marital") +
+  theme_minimal(base_size = 40)
+```
+We can graph the *percent* of people at each age in each marital status category rather than the *number* by using the `positon = "fill"` option in `geom_area()`.
+```{r fig.height=20}
+ggplot(marital_by_sex_age, aes(x = AGE, y = n, fill = MARITAL)) +
+  geom_area(position = "fill") +
+  facet_grid(rows = vars(YEAR), cols = vars(SEX)) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(title = "Marital Status by Sex, 1900-2000",
+       x = "Age", y = "percent of People", fill = "Marital") +
+  theme_minimal(base_size = 40)
+```
+## Line Graphs
+```{r fig.height=20}
+readRDS("graphs/line_sex.RDS")
+```
+Line graphs are good for comparing rates. This one shows the percent of women and men at each age who are in each marital status category, allowing us to easily compare the prevalence of each status at each age between women and men. This graph uses the same data frame we used above for the area graphs, but now we will use the `TOTAL` column to calculate percentages.
+
+We use `geom_line()` rather than `geom_area()` and the `color` aesthetic rather than `fill`. We need to calculate the percentages ourselves (`y = n/TOTAL`) because the denominator is different for each line in each facet.
+```{r fig.height=20}
+ggplot(marital_by_sex_age, aes(x = AGE, y = n/TOTAL, color = SEX)) + 
+  geom_line() +
+  facet_grid(rows = vars(YEAR), cols = vars(MARITAL)) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(title = "Marital Status by Sex, 1900-2000",
+       x = "Age", y = "Percent of People", color = "Sex") +
+  theme_minimal(base_size = 40)
+```
+Alternatively, we can use line color to indicate year, so we can see change over time within each sex and marital status category. The only difference in the code is that we have reversed the positions of sex and year.
+```{r fig.height=20}
+ggplot(marital_by_sex_age, aes(x = AGE, y = n/TOTAL, color = factor(YEAR))) + 
+  geom_line() +
+  facet_grid(rows = vars(SEX), cols = vars(MARITAL)) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(title = "Marital Status by Sex, 1900-2000",
+       x = "Age", y = "Percent of People", color = "Year") +
+  theme_minimal(base_size = 40)
+```
+## Heat Map
+```{r fig.height=10}
+readRDS("graphs/heat_map.RDS")
+```
+A heat map uses color to represent quantity. Here the quantity we are representing is the percent of men and women in each marital status category in each year. Conceptually, this is identical to the percent column graph above. We use the same data frame we used for the column graph, but now we use the `TOTAL` variable to calculate percentages. In a heat map, the x-axis and y-axis variables are both categorical and the fill variable is continuous. Below, I have used `scale_fill_gradient()` to control the color ramp.
+```{r fig.height = 10}
+ggplot(marital_by_sex, aes(x = SEX, y = MARITAL, fill = n/TOTAL)) +
+  geom_tile() +
+  facet_wrap(vars(YEAR)) +
+  scale_fill_gradient(low = "white", high = "steelblue", labels = scales::percent) +
+    labs(title = "Marital Status by Sex, 1900-2000", x = "", y = "") +
+  theme_minimal(base_size = 20) +
+  theme(legend.position = "none")
+```
+# Sex Ratio by State
+## Choropleth Map
+```{r fig.height=10}
+readRDS("graphs/choropleth.RDS")
+```
+A choropleth map is similar to a heat map, but it locates quantities in geographic space. This map uses color to indicate the sex ratio (number of men per 100 women) in each state in 1900 and 2000. First, we need a data frame with the sex ratio for each state in each year, which we have in `sex_ratio`. The `STATEFIP` column gives the FIPS code for the state.
+```{r}
+head(sex_ratio)
+```
+To map these data, we need a data frame with the geometry of each state. We get this from the `tigris` package, using the `states()` function with the `class = "sf"` option. 
+```{r results = "hide"}
+states <- states(class = "sf") %>% 
+            filter(!NAME %in% c("Hawaii", "Alaska")) %>%
+            mutate(STATEFIP = as.numeric(STATEFP)) 
+```
+This produces a simple features data frame, which has a row for each areal unit (states in this case) and a `geometry` column to indicate where the boundaries of each unit are.
+```{r}
+head(states)
+```
+We then join this data frame to the `sex_ratio` data frame. Since both data frames have a `STATEFIP` column, that will be used for the join by default. In `ggplot()`, `geom_sf()` (from the `sf` package) draws the states. The only aesthetic we need is *fill*, which goes inside `geom_sf()`. Below I have used the `viridis` package for the color ramp and `theme_map()` from the `cowplot` package to remove the axes and gridlines.
+```{r fig.height=10}
+inner_join(states, filter(sex_ratio, YEAR %in% c(1900, 2000))) %>% 
+  ggplot() +
+  geom_sf(aes(fill = RATIO)) +
+  facet_grid(rows = vars(YEAR)) +
+  scale_fill_viridis(direction = -1) +
+  theme_map(base_size = 20) +
+  coord_sf(datum = NA) +
+  labs(title = "Sex Ratio by State", fill = "M/F*100")
+```
+## Scatter Plot
+A scatter plot allows you to identify relationships between two continuous variables, using points at the intersection of the two variables, which are on the x-axis and y-axis. In this case, we will treat year as a continuous variable for visualization purposes. For the scatter plot, we will use the same data frame we used for the choropleth map, and we will join it to the `states` data frame to get the names of the states. We will use `geom_point()` to visualize data as points with color indicating state. If we wanted to, we could change the size of the points.
+```{r fig.height=10}
+inner_join(states, sex_ratio) %>% 
+  ggplot(aes(x = YEAR, y = RATIO, color = NAME)) +
+  geom_point() +
+  theme_minimal(base_size = 20) +
+  theme(legend.position = "bottom") +
+  labs(title = "Sex Ratio by State, 1900-2000",
+       x = "Year", y = "Sex Ratio", color = "State")
+```
+If we don't want all of the points plotting on top of each other, we can use `geom_jitter()` to add just a bit of randomness to spread them out enough to see them better.
+```{r fig.height=10}
+inner_join(states, sex_ratio) %>% 
+  ggplot(aes(x = YEAR, y = RATIO, color = NAME)) +
+  geom_jitter() +
+  theme_minimal(base_size = 20) +
+  theme(legend.position = "bottom") +
+  labs(title = "Sex Ratio by State, 1900-2000",
+       x = "Year", y = "Sex Ratio", color = "State")
+```
+## Cleveland Dot Plot
+A Cleveland Dot Plot is a very simple scatter plot, and is generally used with a categorical x-axis variable. We will use the same data as the scatter plot, but we will facet by state in order to show how the sex ratio of each state has changed across the twentieth century. We will use the `geom_point()` geometry, just as we did in the first scatter plot. In a Cleveland Dot Plot, it is traditional to make the points a bit bigger than they would be in a scatter plot.
+```{r fig.height=10}
+inner_join(states, sex_ratio) %>% 
+  ggplot(aes(x = YEAR, y = RATIO, color = NAME)) +
+  geom_point(size = 2) +
+  scale_x_continuous(breaks = seq(1900, 1990, 30)) +
+  facet_wrap(vars(NAME)) +
+  theme_minimal(base_size = 20) +
+  theme(legend.position = "none") +
+  labs(title = "Sex Ratio by State, 1900-2000",
+     x = "Year", y = "Sex Ratio")
+```
+
